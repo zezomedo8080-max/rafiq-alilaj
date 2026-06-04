@@ -21,7 +21,7 @@ function safeEqual(left, right) {
   return leftBuffer.length === rightBuffer.length && timingSafeEqual(leftBuffer, rightBuffer);
 }
 
-function validSpaceId(value) {
+function validId(value) {
   return typeof value === "string" && /^[a-f0-9]{64}$/.test(value);
 }
 
@@ -29,10 +29,14 @@ function validToken(value) {
   return typeof value === "string" && /^[a-f0-9]{64}$/.test(value);
 }
 
+function validAccountName(value) {
+  return typeof value === "string" && /^[\u0600-\u06FFa-z0-9_-]{3,64}$/i.test(value);
+}
+
 function validEncrypted(value) {
   return (
     value &&
-    value.version === 1 &&
+    [1, 2].includes(value.version) &&
     typeof value.iv === "string" &&
     value.iv.length < 128 &&
     typeof value.ciphertext === "string" &&
@@ -43,38 +47,41 @@ function validEncrypted(value) {
 
 export default async (request) => {
   const url = new URL(request.url);
-  const spaceId = url.searchParams.get("spaceId");
+  const accountId = url.searchParams.get("accountId");
   const token = request.headers.get("x-sync-token");
 
-  if (!validSpaceId(spaceId) || !validToken(token)) {
-    return json({ message: "بيانات الوصول إلى المزامنة غير صالحة." }, 400);
+  if (!validId(accountId) || !validToken(token)) {
+    return json({ message: "بيانات الدخول إلى حساب المزامنة غير صالحة." }, 400);
   }
 
-  const store = getStore({ name: "rafiq-sync-spaces", consistency: "strong" });
-  const existing = await store.get(spaceId, { type: "json" });
+  const store = getStore({ name: "rafiq-sync-accounts", consistency: "strong" });
+  const existing = await store.get(accountId, { type: "json" });
 
   if (request.method === "POST") {
-    if (existing) return json({ message: "مساحة المزامنة موجودة بالفعل." }, 409);
+    if (existing) return json({ message: "اسم الحساب موجود بالفعل. اختر اسمًا آخر أو سجل الدخول." }, 409);
     const body = await request.json().catch(() => null);
     if (!validEncrypted(body?.encrypted)) return json({ message: "البيانات المشفرة غير صالحة." }, 400);
+    if (!validAccountName(body?.accountName)) return json({ message: "اسم الحساب غير صالح." }, 400);
     const record = {
+      accountName: body.accountName,
       tokenHash: hash(token),
       encrypted: body.encrypted,
       version: 1,
       updatedAt: new Date().toISOString(),
     };
-    const result = await store.setJSON(spaceId, record, { onlyIfNew: true });
-    if (!result.modified) return json({ message: "تعذر إنشاء مساحة المزامنة." }, 409);
-    return json({ version: record.version, updatedAt: record.updatedAt }, 201);
+    const result = await store.setJSON(accountId, record, { onlyIfNew: true });
+    if (!result.modified) return json({ message: "تعذر إنشاء حساب المزامنة." }, 409);
+    return json({ accountName: record.accountName, version: record.version, updatedAt: record.updatedAt }, 201);
   }
 
-  if (!existing) return json({ message: "لم يتم العثور على مساحة المزامنة." }, 404);
+  if (!existing) return json({ message: "لم يتم العثور على هذا الحساب." }, 404);
   if (!safeEqual(existing.tokenHash, hash(token))) {
-    return json({ message: "رمز المزامنة غير صحيح." }, 401);
+    return json({ message: "اسم الحساب أو كلمة المرور غير صحيحة." }, 401);
   }
 
   if (request.method === "GET") {
     return json({
+      accountName: existing.accountName,
       encrypted: existing.encrypted,
       version: existing.version,
       updatedAt: existing.updatedAt,
@@ -100,12 +107,12 @@ export default async (request) => {
       version: existing.version + 1,
       updatedAt: new Date().toISOString(),
     };
-    await store.setJSON(spaceId, record);
-    return json({ version: record.version, updatedAt: record.updatedAt });
+    await store.setJSON(accountId, record);
+    return json({ accountName: record.accountName, version: record.version, updatedAt: record.updatedAt });
   }
 
   if (request.method === "DELETE") {
-    await store.delete(spaceId);
+    await store.delete(accountId);
     return json({ deleted: true });
   }
 

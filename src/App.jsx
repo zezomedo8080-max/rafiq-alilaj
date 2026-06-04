@@ -15,7 +15,6 @@ import {
   ClipboardCheck,
   Cloud,
   CloudOff,
-  Copy,
   Clock3,
   Download,
   Edit3,
@@ -83,12 +82,11 @@ import {
   todayISO,
 } from "./data";
 import {
-  createCloudSpace,
-  deleteCloudSpace,
-  fetchCloudSpace,
-  generateSyncCode,
-  normalizeSyncCode,
-  saveCloudSpace,
+  createCloudAccount,
+  deleteCloudAccount,
+  fetchCloudAccount,
+  normalizeAccountName,
+  saveCloudAccount,
 } from "./sync";
 
 const navItems = [
@@ -157,12 +155,13 @@ function App() {
   const [syncModal, setSyncModal] = useState(false);
   const [syncConfig, setSyncConfig] = useState(() => {
     try {
-      return JSON.parse(localStorage.getItem("rafiq-sync-config")) || { code: "" };
+      const saved = JSON.parse(localStorage.getItem("rafiq-sync-config")) || {};
+      return saved.accountName && saved.password ? saved : { accountName: "", password: "" };
     } catch {
-      return { code: "" };
+      return { accountName: "", password: "" };
     }
   });
-  const [syncStatus, setSyncStatus] = useState({ state: syncConfig.code ? "connecting" : "off", message: "" });
+  const [syncStatus, setSyncStatus] = useState({ state: syncConfig.accountName ? "connecting" : "off", message: "" });
   const syncVersionRef = useRef(null);
   const lastSyncedRef = useRef("");
   const syncReadyRef = useRef(false);
@@ -187,11 +186,13 @@ function App() {
     return () => clearTimeout(timer);
   }, [toast]);
 
+  const hasCloudAccount = Boolean(syncConfig.accountName && syncConfig.password);
+
   const pullCloudData = async (showToast = false) => {
-    if (!syncConfig.code) return;
+    if (!hasCloudAccount) return;
     setSyncStatus({ state: "connecting", message: "جارٍ جلب أحدث البيانات..." });
     try {
-      const cloud = await fetchCloudSpace(syncConfig.code);
+      const cloud = await fetchCloudAccount(syncConfig.accountName, syncConfig.password);
       syncVersionRef.current = cloud.version;
       lastSyncedRef.current = JSON.stringify(cloud.data);
       syncReadyRef.current = true;
@@ -205,7 +206,7 @@ function App() {
   };
 
   useEffect(() => {
-    if (!syncConfig.code) {
+    if (!hasCloudAccount) {
       syncReadyRef.current = false;
       syncVersionRef.current = null;
       lastSyncedRef.current = "";
@@ -216,7 +217,7 @@ function App() {
     const initialPull = async () => {
       setSyncStatus({ state: "connecting", message: "جارٍ الاتصال..." });
       try {
-        const cloud = await fetchCloudSpace(syncConfig.code);
+        const cloud = await fetchCloudAccount(syncConfig.accountName, syncConfig.password);
         if (cancelled) return;
         syncVersionRef.current = cloud.version;
         lastSyncedRef.current = JSON.stringify(cloud.data);
@@ -239,16 +240,16 @@ function App() {
       cancelled = true;
       window.clearInterval(interval);
     };
-  }, [syncConfig.code]);
+  }, [hasCloudAccount, syncConfig.accountName, syncConfig.password]);
 
   useEffect(() => {
-    if (!syncConfig.code || !syncReadyRef.current) return undefined;
+    if (!hasCloudAccount || !syncReadyRef.current) return undefined;
     const serialized = JSON.stringify(data);
     if (serialized === lastSyncedRef.current) return undefined;
     setSyncStatus({ state: "saving", message: "جارٍ حفظ التعديلات..." });
     const timer = window.setTimeout(async () => {
       try {
-        const result = await saveCloudSpace(syncConfig.code, data, syncVersionRef.current);
+        const result = await saveCloudAccount(syncConfig.accountName, syncConfig.password, data, syncVersionRef.current);
         syncVersionRef.current = result.version;
         lastSyncedRef.current = serialized;
         setSyncStatus({ state: "synced", message: "تمت المزامنة" });
@@ -260,44 +261,44 @@ function App() {
       }
     }, 1200);
     return () => window.clearTimeout(timer);
-  }, [data, syncConfig.code]);
+  }, [data, hasCloudAccount, syncConfig.accountName, syncConfig.password]);
 
-  const createSyncSpace = async () => {
-    const code = generateSyncCode();
-    setSyncStatus({ state: "saving", message: "جارٍ إنشاء مساحة المزامنة..." });
-    const result = await createCloudSpace(code, data);
+  const createSyncAccount = async (accountName, password) => {
+    const normalizedName = normalizeAccountName(accountName);
+    setSyncStatus({ state: "saving", message: "جارٍ إنشاء الحساب ورفع بيانات هذا الجهاز..." });
+    const result = await createCloudAccount(normalizedName, password, data);
     syncVersionRef.current = result.version;
     lastSyncedRef.current = JSON.stringify(data);
     syncReadyRef.current = true;
-    setSyncConfig({ code });
+    setSyncConfig({ accountName: normalizedName, password });
     setSyncStatus({ state: "synced", message: "تمت المزامنة" });
-    setToast("تم إنشاء مساحة المزامنة المشفرة");
+    setToast("تم إنشاء الحساب ورفع البيانات الحالية");
   };
 
-  const joinSyncSpace = async (code) => {
-    const normalized = normalizeSyncCode(code);
-    setSyncStatus({ state: "connecting", message: "جارٍ ربط الجهاز..." });
-    const cloud = await fetchCloudSpace(normalized);
+  const loginSyncAccount = async (accountName, password) => {
+    const normalizedName = normalizeAccountName(accountName);
+    setSyncStatus({ state: "connecting", message: "جارٍ تسجيل الدخول وجلب البيانات..." });
+    const cloud = await fetchCloudAccount(normalizedName, password);
     syncVersionRef.current = cloud.version;
     lastSyncedRef.current = JSON.stringify(cloud.data);
     syncReadyRef.current = true;
     setData({ ...defaultData, ...cloud.data });
-    setSyncConfig({ code: normalized });
+    setSyncConfig({ accountName: normalizedName, password });
     setSyncStatus({ state: "synced", message: "تمت المزامنة" });
-    setToast("تم ربط الجهاز بالبيانات السحابية");
+    setToast("تم تسجيل الدخول وجلب بيانات المريض");
   };
 
   const disconnectSync = () => {
-    setSyncConfig({ code: "" });
+    setSyncConfig({ accountName: "", password: "" });
     setSyncStatus({ state: "off", message: "" });
-    setToast("تم فصل هذا الجهاز. البيانات المحلية ما زالت محفوظة.");
+    setToast("تم تسجيل الخروج من هذا الجهاز. البيانات المحلية ما زالت محفوظة.");
   };
 
-  const removeSyncSpace = async () => {
-    if (!syncConfig.code) return;
-    await deleteCloudSpace(syncConfig.code);
+  const removeSyncAccount = async () => {
+    if (!hasCloudAccount) return;
+    await deleteCloudAccount(syncConfig.accountName, syncConfig.password);
     disconnectSync();
-    setToast("تم حذف مساحة المزامنة السحابية");
+    setToast("تم حذف حساب المزامنة السحابي");
   };
 
   const activeNav = navItems.find((item) => item.id === page);
@@ -424,14 +425,14 @@ function App() {
             <button
               onClick={() => setSyncModal(true)}
               className={`relative rounded-2xl border p-3 shadow-sm ${
-                syncConfig.code
+                hasCloudAccount
                   ? "border-emerald-200 bg-emerald-50 text-emerald-600 dark:border-emerald-900 dark:bg-emerald-950"
                   : "border-slate-200 bg-white text-slate-500 dark:border-slate-700 dark:bg-slate-800"
               }`}
               aria-label="المزامنة بين الأجهزة"
               title={syncStatus.message || "المزامنة بين الأجهزة"}
             >
-              {syncConfig.code ? <Cloud size={19} /> : <CloudOff size={19} />}
+              {hasCloudAccount ? <Cloud size={19} /> : <CloudOff size={19} />}
               {["connecting", "saving"].includes(syncStatus.state) && <span className="absolute left-1 top-1 h-2 w-2 animate-pulse rounded-full bg-orange-400" />}
             </button>
             <button
@@ -522,11 +523,11 @@ function App() {
         onClose={() => setSyncModal(false)}
         config={syncConfig}
         status={syncStatus}
-        onCreate={createSyncSpace}
-        onJoin={joinSyncSpace}
+        onCreate={createSyncAccount}
+        onJoin={loginSyncAccount}
         onPull={() => pullCloudData(true)}
         onDisconnect={disconnectSync}
-        onDelete={removeSyncSpace}
+        onDelete={removeSyncAccount}
         setToast={setToast}
       />
 
@@ -1430,17 +1431,17 @@ function SettingsPage({ data, setData, setToast, openSync, syncStatus, syncConfi
         </section>
         <div className="space-y-6">
           <section className="surface">
-            <SectionHeader title="المزامنة بين الأجهزة" subtitle="استخدم نفس رمز المزامنة السري على الهاتف والكمبيوتر للوصول إلى نفس البيانات." />
-            <div className={`rounded-2xl p-4 ${syncConfig.code ? "bg-emerald-50 dark:bg-emerald-950/30" : "bg-slate-50 dark:bg-slate-800/60"}`}>
+            <SectionHeader title="حساب المريض المشترك" subtitle="استخدم اسم الحساب وكلمة المرور نفسها على أي جهاز لفتح نفس البيانات." />
+            <div className={`rounded-2xl p-4 ${syncConfig.accountName ? "bg-emerald-50 dark:bg-emerald-950/30" : "bg-slate-50 dark:bg-slate-800/60"}`}>
               <div className="flex items-center gap-3">
-                <IconBox icon={syncConfig.code ? Cloud : CloudOff} tone={syncConfig.code ? "green" : "blue"} />
+                <IconBox icon={syncConfig.accountName ? Cloud : CloudOff} tone={syncConfig.accountName ? "green" : "blue"} />
                 <div className="min-w-0 flex-1">
-                  <p className="font-black text-ink dark:text-white">{syncConfig.code ? "المزامنة مفعلة" : "المزامنة غير مفعلة"}</p>
+                  <p className="font-black text-ink dark:text-white">{syncConfig.accountName ? `متصل بحساب: ${syncConfig.accountName}` : "لم يتم تسجيل الدخول"}</p>
                   <p className="mt-1 text-xs leading-5 text-slate-500">{syncStatus.message || "البيانات محفوظة على هذا الجهاز فقط."}</p>
                 </div>
               </div>
             </div>
-            <button className="btn-primary mt-4 w-full" onClick={openSync}><Cloud size={17} /> إدارة المزامنة</button>
+            <button className="btn-primary mt-4 w-full" onClick={openSync}><Cloud size={17} /> إدارة حساب المزامنة</button>
           </section>
           <section className="surface">
             <SectionHeader title="النسخ والبيانات" subtitle="توجد نسخة محلية في المتصفح، ويمكنك تصديرها كملف احتياطي." />
@@ -1465,9 +1466,10 @@ function SettingsPage({ data, setData, setToast, openSync, syncStatus, syncConfi
 }
 
 function SyncModal({ open, onClose, config, status, onCreate, onJoin, onPull, onDisconnect, onDelete, setToast }) {
-  const [joinCode, setJoinCode] = useState("");
+  const [createForm, setCreateForm] = useState({ accountName: "", password: "", confirmPassword: "" });
+  const [loginForm, setLoginForm] = useState({ accountName: "", password: "" });
   const [busy, setBusy] = useState(false);
-  const connected = Boolean(config.code);
+  const connected = Boolean(config.accountName);
   const statusToneClass = {
     synced: "bg-emerald-50 text-emerald-800 dark:bg-emerald-950/30 dark:text-emerald-200",
     saving: "bg-sky-50 text-sky-800 dark:bg-sky-950/30 dark:text-sky-200",
@@ -1487,24 +1489,29 @@ function SyncModal({ open, onClose, config, status, onCreate, onJoin, onPull, on
     }
   };
 
-  const copyCode = async () => {
-    await navigator.clipboard.writeText(config.code);
-    setToast("تم نسخ رمز المزامنة السري");
+  const createAccount = () => {
+    if (createForm.password !== createForm.confirmPassword) {
+      setToast("كلمة المرور وتأكيدها غير متطابقين");
+      return;
+    }
+    run(() => onCreate(createForm.accountName, createForm.password));
   };
+
+  const loginAccount = () => run(() => onJoin(loginForm.accountName, loginForm.password));
 
   return (
     <Modal
       open={open}
       onClose={onClose}
-      title="المزامنة بين الأجهزة"
-      subtitle="نفس رمز المزامنة السري يفتح نفس البيانات على أي جهاز."
+      title="حساب المريض المشترك"
+      subtitle="اكتب اسم الحساب وكلمة المرور لفتح نفس بيانات المريض من أي جهاز."
       size="lg"
     >
       <AlertBox title="تشفير وخصوصية" tone="success">
-        يتم تشفير بيانات العلاج داخل جهازك قبل رفعها. لا تشارك رمز المزامنة إلا مع الشخص المصرح له، لأنه مفتاح الوصول إلى البيانات.
+        يتم تشفير بيانات العلاج داخل جهازك قبل رفعها. أي شخص معه اسم الحساب وكلمة المرور يستطيع فتح البيانات والتعديل عليها.
       </AlertBox>
       <p className="mt-3 rounded-2xl bg-slate-50 p-3 text-xs leading-6 text-slate-500 dark:bg-slate-800/60">
-        المزامنة مناسبة للاستخدام الشخصي والأسري. المؤسسات الطبية التي تخضع لمتطلبات تنظيمية تحتاج استضافة واتفاقيات امتثال مخصصة.
+        لإنشاء الحساب من بياناتك الحالية، استخدم الجهاز الذي أضفت عليه البيانات أولًا. المؤسسات الطبية التي تخضع لمتطلبات تنظيمية تحتاج استضافة واتفاقيات امتثال مخصصة.
       </p>
 
       {connected ? (
@@ -1520,29 +1527,29 @@ function SyncModal({ open, onClose, config, status, onCreate, onJoin, onPull, on
           </div>
 
           <div className="rounded-2xl border border-dashed border-teal-200 bg-teal-50/50 p-4 dark:border-teal-900 dark:bg-teal-950/20">
-            <p className="text-xs font-black text-teal-700 dark:text-teal-300">رمز المزامنة السري</p>
-            <p className="mt-3 break-all rounded-xl bg-white p-3 text-left font-mono text-sm font-bold text-slate-700 dark:bg-slate-900 dark:text-slate-200" dir="ltr">{config.code}</p>
-            <button className="btn-secondary mt-3 w-full" onClick={copyCode}><Copy size={17} /> نسخ الرمز للجهاز الآخر</button>
+            <p className="text-xs font-black text-teal-700 dark:text-teal-300">الحساب الحالي</p>
+            <p className="mt-2 rounded-xl bg-white p-3 text-left font-mono text-sm font-bold text-slate-700 dark:bg-slate-900 dark:text-slate-200" dir="ltr">{config.accountName}</p>
+            <p className="mt-2 text-xs leading-6 text-slate-500">افتح الرابط على أي جهاز، ثم اختر “تسجيل الدخول لحساب موجود” واكتب اسم الحساب وكلمة المرور نفسها.</p>
           </div>
 
           <ol className="space-y-2 rounded-2xl bg-slate-50 p-4 text-sm leading-7 text-slate-600 dark:bg-slate-800/60 dark:text-slate-300">
             <li><strong>1.</strong> افتح الموقع على الجهاز الآخر.</li>
-            <li><strong>2.</strong> اضغط أيقونة السحابة ثم “ربط جهاز موجود”.</li>
-            <li><strong>3.</strong> الصق رمز المزامنة السري نفسه.</li>
+            <li><strong>2.</strong> اضغط أيقونة السحابة ثم “تسجيل الدخول لحساب موجود”.</li>
+            <li><strong>3.</strong> اكتب اسم الحساب وكلمة المرور.</li>
           </ol>
 
           <div className="flex flex-wrap gap-2">
             <button className="btn-primary flex-1" disabled={busy} onClick={() => run(onPull)}><RefreshCw size={17} /> مزامنة الآن</button>
-            <button className="btn-secondary flex-1" disabled={busy} onClick={onDisconnect}><CloudOff size={17} /> فصل هذا الجهاز</button>
+            <button className="btn-secondary flex-1" disabled={busy} onClick={onDisconnect}><CloudOff size={17} /> تسجيل الخروج من هذا الجهاز</button>
           </div>
           <button
             className="btn-danger w-full"
             disabled={busy}
             onClick={() => {
-              if (window.confirm("سيتم حذف النسخة السحابية نهائيًا من جميع الأجهزة. هل تريد المتابعة؟")) run(onDelete);
+              if (window.confirm("سيتم حذف حساب المزامنة السحابي نهائيًا من جميع الأجهزة. هل تريد المتابعة؟")) run(onDelete);
             }}
           >
-            حذف مساحة المزامنة السحابية
+            حذف حساب المزامنة السحابي
           </button>
         </div>
       ) : (
@@ -1551,30 +1558,61 @@ function SyncModal({ open, onClose, config, status, onCreate, onJoin, onPull, on
             <div className="flex items-start gap-3">
               <IconBox icon={ShieldCheck} tone="green" />
               <div className="flex-1">
-                <h3 className="font-black text-ink dark:text-white">إنشاء مساحة مزامنة جديدة</h3>
-                <p className="mt-2 text-sm leading-7 text-slate-500">سيتم رفع بيانات هذا الجهاز بعد تشفيرها، وإنشاء رمز سري تستخدمه على الأجهزة الأخرى.</p>
-                <button className="btn-primary mt-4 w-full" disabled={busy} onClick={() => run(onCreate)}>
+                <h3 className="font-black text-ink dark:text-white">إنشاء حساب جديد من بيانات هذا الجهاز</h3>
+                <p className="mt-2 text-sm leading-7 text-slate-500">سيتم رفع بيانات هذا الجهاز بعد تشفيرها. استخدم اسمًا وكلمة مرور تشاركهما مع من تريد أن يفتح بيانات المريض.</p>
+                <div className="mt-4 grid gap-3">
+                  <input
+                    className="field"
+                    value={createForm.accountName}
+                    onChange={(event) => setCreateForm((current) => ({ ...current, accountName: event.target.value }))}
+                    placeholder="اسم الحساب، مثال: amal-family"
+                    dir="ltr"
+                  />
+                  <input
+                    className="field"
+                    type="password"
+                    value={createForm.password}
+                    onChange={(event) => setCreateForm((current) => ({ ...current, password: event.target.value }))}
+                    placeholder="كلمة المرور"
+                  />
+                  <input
+                    className="field"
+                    type="password"
+                    value={createForm.confirmPassword}
+                    onChange={(event) => setCreateForm((current) => ({ ...current, confirmPassword: event.target.value }))}
+                    placeholder="تأكيد كلمة المرور"
+                  />
+                </div>
+                <button className="btn-primary mt-4 w-full" disabled={busy || createForm.accountName.trim().length < 3 || createForm.password.length < 6} onClick={createAccount}>
                   {busy ? <RefreshCw className="animate-spin" size={17} /> : <Cloud size={17} />}
-                  إنشاء وتفعيل المزامنة
+                  إنشاء الحساب ورفع البيانات
                 </button>
               </div>
             </div>
           </section>
 
           <section className="rounded-2xl border border-slate-200 p-4 dark:border-slate-700">
-            <h3 className="font-black text-ink dark:text-white">ربط جهاز موجود</h3>
-            <p className="mt-2 text-sm leading-7 text-slate-500">الصق رمز المزامنة السري من الجهاز الأول. ستُستبدل بيانات هذا الجهاز بالنسخة السحابية.</p>
-            <textarea
-              className="field mt-3 text-left font-mono"
-              dir="ltr"
-              rows="3"
-              value={joinCode}
-              onChange={(event) => setJoinCode(event.target.value)}
-              placeholder="RAFIQ-..."
-            />
-            <button className="btn-secondary mt-3 w-full" disabled={busy || joinCode.trim().length < 24} onClick={() => run(() => onJoin(joinCode))}>
+            <h3 className="font-black text-ink dark:text-white">تسجيل الدخول لحساب موجود</h3>
+            <p className="mt-2 text-sm leading-7 text-slate-500">اكتب اسم الحساب وكلمة المرور لفتح بيانات المريض. ستُستبدل بيانات هذا الجهاز بالنسخة السحابية.</p>
+            <div className="mt-4 grid gap-3">
+              <input
+                className="field"
+                value={loginForm.accountName}
+                onChange={(event) => setLoginForm((current) => ({ ...current, accountName: event.target.value }))}
+                placeholder="اسم الحساب"
+                dir="ltr"
+              />
+              <input
+                className="field"
+                type="password"
+                value={loginForm.password}
+                onChange={(event) => setLoginForm((current) => ({ ...current, password: event.target.value }))}
+                placeholder="كلمة المرور"
+              />
+            </div>
+            <button className="btn-secondary mt-3 w-full" disabled={busy || loginForm.accountName.trim().length < 3 || loginForm.password.length < 6} onClick={loginAccount}>
               {busy ? <RefreshCw className="animate-spin" size={17} /> : <Cloud size={17} />}
-              ربط الجهاز وجلب البيانات
+              تسجيل الدخول وجلب البيانات
             </button>
           </section>
         </div>
