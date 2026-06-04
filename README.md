@@ -20,8 +20,6 @@ npm run preview
 
 ## الرابط العام
 
-يُنشر الموقع تلقائيًا عبر GitHub Pages عند تحديث فرع `main`:
-
-`https://zezomedo8080-max.github.io/rafiq-alilaj/`
+`https://rafiq-alilaj.netlify.app/`
 
 البيانات التي يدخلها كل مستخدم تُحفظ محليًا في متصفحه ولا تُرسل إلى خادم.
