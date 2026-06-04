@@ -1,8 +1,10 @@
-import React from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import {
   AlertTriangle,
+  CalendarDays,
   CheckCircle2,
   ChevronLeft,
+  Clock3,
   Inbox,
   Search,
   X,
@@ -149,6 +151,151 @@ export function FormField({ label, children, hint, className = "" }) {
       {children}
       {hint && <span className="mt-2 block text-xs leading-5 text-slate-400">{hint}</span>}
     </label>
+  );
+}
+
+const emptyDateParts = { day: "", month: "", year: "" };
+
+function parseISODate(value) {
+  if (!value || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return emptyDateParts;
+  const [year, month, day] = value.split("-");
+  return { day: String(Number(day)), month: String(Number(month)), year };
+}
+
+export function DateInput({ value = "", onChange, required = false, className = "" }) {
+  const [parts, setParts] = useState(() => parseISODate(value));
+  const currentYear = new Date().getFullYear();
+  const years = useMemo(
+    () => Array.from({ length: 26 }, (_, index) => currentYear - 5 + index),
+    [currentYear],
+  );
+
+  useEffect(() => {
+    setParts(parseISODate(value));
+  }, [value]);
+
+  const updatePart = (key, nextValue) => {
+    const next = { ...parts, [key]: nextValue };
+    if (next.day && next.month && next.year) {
+      const maxDay = new Date(Number(next.year), Number(next.month), 0).getDate();
+      if (Number(next.day) > maxDay) next.day = String(maxDay);
+      onChange(`${next.year}-${String(next.month).padStart(2, "0")}-${String(next.day).padStart(2, "0")}`);
+    } else if (value) {
+      onChange("");
+    }
+    setParts(next);
+  };
+
+  return (
+    <div
+      className={`grid grid-cols-[.7fr_.85fr_1fr_1.2fr] gap-2 rounded-2xl border border-slate-200 bg-white p-2 outline-none transition focus-within:border-teal-400 focus-within:ring-4 focus-within:ring-teal-100 dark:border-slate-700 dark:bg-slate-800 dark:focus-within:ring-teal-900/50 ${className}`}
+      dir="rtl"
+    >
+      <span className="flex items-center justify-center text-teal-600" title="اليوم ثم الشهر ثم السنة">
+        <CalendarDays size={18} />
+      </span>
+      <select
+        aria-label="اليوم"
+        required={required}
+        value={parts.day}
+        onChange={(event) => updatePart("day", event.target.value)}
+        className="min-w-0 rounded-xl bg-slate-50 px-2 py-2.5 text-sm font-bold text-slate-700 outline-none dark:bg-slate-900 dark:text-slate-200"
+      >
+        <option value="">اليوم</option>
+        {Array.from({ length: 31 }, (_, index) => index + 1).map((day) => <option key={day} value={day}>{day}</option>)}
+      </select>
+      <select
+        aria-label="الشهر"
+        required={required}
+        value={parts.month}
+        onChange={(event) => updatePart("month", event.target.value)}
+        className="min-w-0 rounded-xl bg-slate-50 px-2 py-2.5 text-sm font-bold text-slate-700 outline-none dark:bg-slate-900 dark:text-slate-200"
+      >
+        <option value="">الشهر</option>
+        {Array.from({ length: 12 }, (_, index) => index + 1).map((month) => <option key={month} value={month}>{month}</option>)}
+      </select>
+      <select
+        aria-label="السنة"
+        required={required}
+        value={parts.year}
+        onChange={(event) => updatePart("year", event.target.value)}
+        className="min-w-0 rounded-xl bg-slate-50 px-2 py-2.5 text-sm font-bold text-slate-700 outline-none dark:bg-slate-900 dark:text-slate-200"
+      >
+        <option value="">السنة</option>
+        {years.map((year) => <option key={year} value={year}>{year}</option>)}
+      </select>
+    </div>
+  );
+}
+
+function parse24HourTime(value) {
+  if (!value || !/^\d{2}:\d{2}$/.test(value)) return { hour: "", minute: "00", period: "AM" };
+  const [rawHour, minute] = value.split(":");
+  const hour24 = Number(rawHour);
+  return {
+    hour: String(hour24 % 12 || 12),
+    minute,
+    period: hour24 >= 12 ? "PM" : "AM",
+  };
+}
+
+export function TimeInput12({ value = "", onChange, required = false, className = "" }) {
+  const [parts, setParts] = useState(() => parse24HourTime(value));
+
+  useEffect(() => {
+    setParts(parse24HourTime(value));
+  }, [value]);
+
+  const updatePart = (key, nextValue) => {
+    const next = { ...parts, [key]: nextValue };
+    if (next.hour && next.minute && next.period) {
+      let hour24 = Number(next.hour) % 12;
+      if (next.period === "PM") hour24 += 12;
+      onChange(`${String(hour24).padStart(2, "0")}:${next.minute}`);
+    } else if (value) {
+      onChange("");
+    }
+    setParts(next);
+  };
+
+  return (
+    <div
+      className={`grid grid-cols-[.7fr_.85fr_.85fr_1.2fr] gap-2 rounded-2xl border border-slate-200 bg-white p-2 outline-none transition focus-within:border-teal-400 focus-within:ring-4 focus-within:ring-teal-100 dark:border-slate-700 dark:bg-slate-800 dark:focus-within:ring-teal-900/50 ${className}`}
+      dir="rtl"
+    >
+      <span className="flex items-center justify-center text-teal-600" title="نظام 12 ساعة">
+        <Clock3 size={18} />
+      </span>
+      <select
+        aria-label="الساعة"
+        required={required}
+        value={parts.hour}
+        onChange={(event) => updatePart("hour", event.target.value)}
+        className="min-w-0 rounded-xl bg-slate-50 px-2 py-2.5 text-sm font-bold text-slate-700 outline-none dark:bg-slate-900 dark:text-slate-200"
+      >
+        <option value="">الساعة</option>
+        {Array.from({ length: 12 }, (_, index) => index + 1).map((hour) => <option key={hour} value={hour}>{hour}</option>)}
+      </select>
+      <select
+        aria-label="الدقائق"
+        required={required}
+        value={parts.minute}
+        onChange={(event) => updatePart("minute", event.target.value)}
+        className="min-w-0 rounded-xl bg-slate-50 px-2 py-2.5 text-sm font-bold text-slate-700 outline-none dark:bg-slate-900 dark:text-slate-200"
+      >
+        {Array.from({ length: 60 }, (_, index) => String(index).padStart(2, "0")).map((minute) => <option key={minute} value={minute}>{minute}</option>)}
+      </select>
+      <select
+        aria-label="صباحًا أو مساءً"
+        required={required}
+        value={parts.period}
+        onChange={(event) => updatePart("period", event.target.value)}
+        className="min-w-0 rounded-xl bg-slate-50 px-2 py-2.5 text-sm font-bold text-slate-700 outline-none dark:bg-slate-900 dark:text-slate-200"
+      >
+        <option value="AM">صباحًا</option>
+        <option value="PM">مساءً</option>
+      </select>
+    </div>
   );
 }
 

@@ -280,3 +280,12 @@ export const formatShortDate = (date) => {
     month: "short",
   }).format(new Date(`${date}T12:00:00`));
 };
+
+export const formatTime = (time) => {
+  if (!time || !/^\d{2}:\d{2}$/.test(time)) return "غير محدد";
+  const [rawHour, minute] = time.split(":");
+  const hour24 = Number(rawHour);
+  const hour12 = hour24 % 12 || 12;
+  const period = hour24 >= 12 ? "مساءً" : "صباحًا";
+  return `${hour12}:${minute} ${period}`;
+};

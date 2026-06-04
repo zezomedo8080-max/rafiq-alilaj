@@ -56,6 +56,7 @@ import {
   AlertBox,
   Badge,
   ConfirmDelete,
+  DateInput,
   EmptyState,
   FormField,
   IconBox,
@@ -65,11 +66,13 @@ import {
   SearchField,
   SectionHeader,
   StatCard,
+  TimeInput12,
 } from "./components";
 import {
   defaultData,
   formatDate,
   formatShortDate,
+  formatTime,
   instructionCategories,
   statusLabels,
   todayISO,
@@ -460,7 +463,7 @@ function Dashboard({ data, navigate, openModal, setData }) {
                 </span>
                 <span className="rounded-xl bg-white/10 p-3">
                   <Clock3 size={15} className="mb-2" />
-                  {nextAppointment.startTime}
+                  {formatTime(nextAppointment.startTime)}
                 </span>
               </div>
             )}
@@ -471,7 +474,7 @@ function Dashboard({ data, navigate, openModal, setData }) {
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
         <StatCard icon={Syringe} tone="teal" label="الجرعة القادمة" value={formatShortDate(data.cycles.find((c) => c.status === "upcoming")?.start)} detail="حسب الخطة المدخلة" onClick={() => navigate("cycles")} />
         <StatCard icon={Moon} tone="lavender" label="فترة الراحة" value={currentCycle ? `${formatShortDate(currentCycle.restFrom)} - ${formatShortDate(currentCycle.restTo)}` : "غير محددة"} detail="الدورة الحالية" onClick={() => navigate("cycles")} />
-        <StatCard icon={Pill} tone="blue" label="أدوية اليوم" value={`${data.medications.length} أدوية`} detail={pendingMed ? `${pendingMed.name} • ${pendingMed.time}` : "لا توجد"} onClick={() => navigate("medications")} />
+        <StatCard icon={Pill} tone="blue" label="أدوية اليوم" value={`${data.medications.length} أدوية`} detail={pendingMed ? `${pendingMed.name} • ${formatTime(pendingMed.time)}` : "لا توجد"} onClick={() => navigate("medications")} />
         <StatCard icon={FlaskConical} tone="orange" label="تحاليل مطلوبة" value={pendingLab?.name || "لا يوجد"} detail={pendingLab ? `قبل ${pendingLab.beforeSession}` : "كل النتائج محدثة"} onClick={() => navigate("labs")} />
         <StatCard icon={Activity} tone="green" label="أعراض مسجلة" value={`${data.symptoms.length} سجلات`} detail="آخر تسجيل متاح للمراجعة" onClick={() => navigate("symptoms")} />
       </div>
@@ -512,7 +515,7 @@ function Dashboard({ data, navigate, openModal, setData }) {
                   </div>
                   <div className="min-w-0 flex-1 border-b border-slate-100 pb-4 dark:border-slate-800">
                     <p className="truncate text-sm font-black text-ink dark:text-white">{appointment.title}</p>
-                    <p className="mt-1 text-xs text-slate-500">{appointment.startTime} • {appointment.location}</p>
+                    <p className="mt-1 text-xs text-slate-500">{formatTime(appointment.startTime)} • {appointment.location}</p>
                   </div>
                 </div>
               ))}
@@ -796,7 +799,7 @@ function AppointmentCard({ appointment, onEdit, onDelete }) {
             <h3 className="font-black text-ink dark:text-white">{appointment.title}</h3>
             <Badge tone={tone}>{appointment.type}</Badge>
           </div>
-          <p className="mt-2 text-sm font-bold text-slate-500">{formatDate(appointment.date)} • {appointment.startTime}</p>
+          <p className="mt-2 text-sm font-bold text-slate-500">{formatDate(appointment.date)} • {formatTime(appointment.startTime)}</p>
         </div>
       </div>
       <div className="mt-4 grid gap-2 sm:grid-cols-2">
@@ -844,7 +847,7 @@ function MedicationsPage({ data, setData, openModal, deleteEntity }) {
               </div>
             </div>
             <div className="mt-5 grid grid-cols-2 gap-3">
-              <InfoRow label="الموعد" value={med.time} icon={Clock3} />
+              <InfoRow label="الموعد" value={formatTime(med.time)} icon={Clock3} />
               <InfoRow label="التكرار" value={med.frequency} icon={Bell} />
             </div>
             <p className="mt-4 rounded-2xl bg-slate-50 p-3 text-xs leading-6 text-slate-500 dark:bg-slate-800/60">{med.notes}</p>
@@ -1047,7 +1050,7 @@ function InstructionsPage({ data, setData, openModal, deleteEntity, togglePin, n
           <select className="field lg:w-44" value={priority} onChange={(e) => setPriority(e.target.value)}>
             <option>الكل</option><option>عادي</option><option>مهم</option><option>عاجل</option>
           </select>
-          <input className="field lg:w-44" type="date" value={date} onChange={(e) => setDate(e.target.value)} />
+          <DateInput value={date} onChange={setDate} className="lg:w-[25rem]" />
         </div>
         <div className="mt-3 grid gap-3 sm:grid-cols-3">
           <select className="field" value={cycleId} onChange={(e) => setCycleId(e.target.value)}>
@@ -1187,7 +1190,7 @@ function ReportsPage({ data }) {
           {data.cycles.map((item) => <ReportLine key={item.id} title={item.number} detail={`${formatDate(item.start)} - ${formatDate(item.end)}`} badge={statusLabels[item.status]} />)}
         </ReportSection>
         <ReportSection title="المواعيد القادمة" icon={CalendarCheck}>
-          {data.appointments.map((item) => <ReportLine key={item.id} title={item.title} detail={`${formatDate(item.date)} • ${item.startTime}`} badge={item.type} />)}
+          {data.appointments.map((item) => <ReportLine key={item.id} title={item.title} detail={`${formatDate(item.date)} • ${formatTime(item.startTime)}`} badge={item.type} />)}
         </ReportSection>
         <ReportSection title="آخر الأعراض المسجلة" icon={Activity}>
           {data.symptoms.map((item) => <ReportLine key={item.id} title={item.name} detail={`${formatDate(item.date)} • الشدة ${item.severity}/10 • الحرارة ${item.temperature}°`} />)}
@@ -1338,7 +1341,8 @@ function useEntityForm(item, defaults) {
     value: form[name] ?? "",
     onChange: (event) => setForm((current) => ({ ...current, [name]: event.target.type === "checkbox" ? event.target.checked : event.target.value })),
   });
-  return [form, setForm, field];
+  const setValue = (name, value) => setForm((current) => ({ ...current, [name]: value }));
+  return [form, setForm, field, setValue];
 }
 
 function FormActions() {
@@ -1350,7 +1354,7 @@ function FormActions() {
 }
 
 function CycleForm({ item, data, onSave }) {
-  const [form, setForm, field] = useEntityForm(item, {
+  const [form, setForm, field, setValue] = useEntityForm(item, {
     id: "", number: "", start: "", end: "", treatmentFrom: "", treatmentTo: "", restFrom: "", restTo: "", location: "", sessionName: "", doctorNotes: "", status: "upcoming", instructionIds: [],
   });
   return (
@@ -1358,12 +1362,12 @@ function CycleForm({ item, data, onSave }) {
       <div className="grid gap-4 sm:grid-cols-2">
         <FormField label="اسم / رقم الدورة"><input required className="field" placeholder="مثال: الدورة الخامسة" {...field("number")} /></FormField>
         <FormField label="الحالة"><select className="field" {...field("status")}><option value="upcoming">قادمة</option><option value="active">نشطة</option><option value="completed">مكتملة</option><option value="delayed">مؤجلة</option></select></FormField>
-        <FormField label="بداية الدورة"><input required type="date" className="field" {...field("start")} /></FormField>
-        <FormField label="نهاية الدورة"><input required type="date" className="field" {...field("end")} /></FormField>
-        <FormField label="أيام العلاج من"><input type="date" className="field" {...field("treatmentFrom")} /></FormField>
-        <FormField label="أيام العلاج إلى"><input type="date" className="field" {...field("treatmentTo")} /></FormField>
-        <FormField label="أيام الراحة من"><input type="date" className="field" {...field("restFrom")} /></FormField>
-        <FormField label="أيام الراحة إلى"><input type="date" className="field" {...field("restTo")} /></FormField>
+        <FormField label="بداية الدورة" hint="اليوم / الشهر / السنة"><DateInput required value={form.start} onChange={(value) => setValue("start", value)} /></FormField>
+        <FormField label="نهاية الدورة" hint="اليوم / الشهر / السنة"><DateInput required value={form.end} onChange={(value) => setValue("end", value)} /></FormField>
+        <FormField label="أيام العلاج من" hint="اليوم / الشهر / السنة"><DateInput value={form.treatmentFrom} onChange={(value) => setValue("treatmentFrom", value)} /></FormField>
+        <FormField label="أيام العلاج إلى" hint="اليوم / الشهر / السنة"><DateInput value={form.treatmentTo} onChange={(value) => setValue("treatmentTo", value)} /></FormField>
+        <FormField label="أيام الراحة من" hint="اليوم / الشهر / السنة"><DateInput value={form.restFrom} onChange={(value) => setValue("restFrom", value)} /></FormField>
+        <FormField label="أيام الراحة إلى" hint="اليوم / الشهر / السنة"><DateInput value={form.restTo} onChange={(value) => setValue("restTo", value)} /></FormField>
         <FormField label="مكان العلاج"><input className="field" {...field("location")} /></FormField>
         <FormField label="اسم الدواء / الجلسة كما كتبه الطبيب"><input className="field" {...field("sessionName")} /></FormField>
         <FormField label="ملاحظات الطبيب" className="sm:col-span-2"><textarea rows="4" className="field" {...field("doctorNotes")} /></FormField>
@@ -1396,7 +1400,7 @@ function CycleForm({ item, data, onSave }) {
 }
 
 function AppointmentForm({ item, onSave }) {
-  const [form, , field] = useEntityForm(item, {
+  const [form, , field, setValue] = useEntityForm(item, {
     id: "", title: "", type: "جرعة علاج", date: "", startTime: "", endTime: "", location: "", department: "", notes: "", reminder: "قبل الموعد بيوم",
   });
   return (
@@ -1404,9 +1408,9 @@ function AppointmentForm({ item, onSave }) {
       <div className="grid gap-4 sm:grid-cols-2">
         <FormField label="عنوان الموعد" className="sm:col-span-2"><input required className="field" {...field("title")} /></FormField>
         <FormField label="نوع الموعد"><select className="field" {...field("type")}>{["جرعة علاج", "كشف دكتور", "تحليل", "أشعة", "علاج إشعاعي", "متابعة", "أخرى"].map((value) => <option key={value}>{value}</option>)}</select></FormField>
-        <FormField label="التاريخ"><input required type="date" className="field" {...field("date")} /></FormField>
-        <FormField label="وقت البداية"><input type="time" className="field" {...field("startTime")} /></FormField>
-        <FormField label="وقت النهاية"><input type="time" className="field" {...field("endTime")} /></FormField>
+        <FormField label="التاريخ" hint="اليوم / الشهر / السنة"><DateInput required value={form.date} onChange={(value) => setValue("date", value)} /></FormField>
+        <FormField label="وقت البداية" hint="نظام 12 ساعة"><TimeInput12 value={form.startTime} onChange={(value) => setValue("startTime", value)} /></FormField>
+        <FormField label="وقت النهاية" hint="نظام 12 ساعة"><TimeInput12 value={form.endTime} onChange={(value) => setValue("endTime", value)} /></FormField>
         <FormField label="المكان"><input className="field" {...field("location")} /></FormField>
         <FormField label="الطبيب / القسم"><input className="field" {...field("department")} /></FormField>
         <FormField label="التذكير"><select className="field" {...field("reminder")}><option>قبل الموعد بساعتين</option><option>قبل الموعد بيوم</option><option>قبل الموعد بيومين</option></select></FormField>
@@ -1418,7 +1422,7 @@ function AppointmentForm({ item, onSave }) {
 }
 
 function MedicationForm({ item, onSave }) {
-  const [form, , field] = useEntityForm(item, {
+  const [form, , field, setValue] = useEntityForm(item, {
     id: "", name: "", dose: "", time: "", frequency: "مرة يوميًا", start: "", end: "", notes: "", state: "pending",
   });
   return (
@@ -1427,10 +1431,10 @@ function MedicationForm({ item, onSave }) {
       <div className="mt-5 grid gap-4 sm:grid-cols-2">
         <FormField label="اسم الدواء"><input required className="field" {...field("name")} /></FormField>
         <FormField label="الجرعة المكتوبة يدويًا"><input required className="field" placeholder="مثال: قرص بعد الأكل" {...field("dose")} /></FormField>
-        <FormField label="الوقت"><input type="time" className="field" {...field("time")} /></FormField>
+        <FormField label="الوقت" hint="نظام 12 ساعة"><TimeInput12 value={form.time} onChange={(value) => setValue("time", value)} /></FormField>
         <FormField label="التكرار"><select className="field" {...field("frequency")}><option>مرة يوميًا</option><option>مرتين يوميًا</option><option>أسبوعيًا</option><option>مخصص حسب الطبيب</option></select></FormField>
-        <FormField label="تاريخ البداية"><input type="date" className="field" {...field("start")} /></FormField>
-        <FormField label="تاريخ النهاية"><input type="date" className="field" {...field("end")} /></FormField>
+        <FormField label="تاريخ البداية" hint="اليوم / الشهر / السنة"><DateInput value={form.start} onChange={(value) => setValue("start", value)} /></FormField>
+        <FormField label="تاريخ النهاية" hint="اليوم / الشهر / السنة"><DateInput value={form.end} onChange={(value) => setValue("end", value)} /></FormField>
         <FormField label="ملاحظات" className="sm:col-span-2"><textarea rows="3" className="field" {...field("notes")} /></FormField>
       </div>
       <FormActions />
@@ -1439,14 +1443,14 @@ function MedicationForm({ item, onSave }) {
 }
 
 function SymptomForm({ item, onSave }) {
-  const [form, , field] = useEntityForm(item, {
+  const [form, , field, setValue] = useEntityForm(item, {
     id: "", date: todayISO(), name: "", severity: "1", temperature: "", nausea: "لا يوجد", pain: "لا يوجد", fatigue: "لا يوجد", appetite: "طبيعي", sleep: "طبيعي", mood: "مستقر", bleeding: "لا", notes: "",
   });
   return (
     <form onSubmit={(e) => { e.preventDefault(); onSave(form); }}>
       <div className="grid gap-4 sm:grid-cols-2">
         <FormField label="اسم العرض"><input required className="field" {...field("name")} /></FormField>
-        <FormField label="التاريخ"><input required type="date" className="field" {...field("date")} /></FormField>
+        <FormField label="التاريخ" hint="اليوم / الشهر / السنة"><DateInput required value={form.date} onChange={(value) => setValue("date", value)} /></FormField>
         <FormField label={`درجة الشدة: ${form.severity} من 10`} className="sm:col-span-2"><input type="range" min="1" max="10" className="w-full accent-teal-600" {...field("severity")} /></FormField>
         <FormField label="درجة الحرارة"><input type="number" step="0.1" className="field" {...field("temperature")} /></FormField>
         <FormField label="الغثيان"><input className="field" {...field("nausea")} /></FormField>
@@ -1464,14 +1468,14 @@ function SymptomForm({ item, onSave }) {
 }
 
 function LabForm({ item, onSave }) {
-  const [form, setForm, field] = useEntityForm(item, {
+  const [form, setForm, field, setValue] = useEntityForm(item, {
     id: "", name: "", date: "", beforeSession: "", status: "pending", attachment: "", notes: "",
   });
   return (
     <form onSubmit={(e) => { e.preventDefault(); onSave(form); }}>
       <div className="grid gap-4 sm:grid-cols-2">
         <FormField label="اسم التحليل / الأشعة"><input required className="field" placeholder="مثال: CBC" {...field("name")} /></FormField>
-        <FormField label="التاريخ"><input type="date" className="field" {...field("date")} /></FormField>
+        <FormField label="التاريخ" hint="اليوم / الشهر / السنة"><DateInput value={form.date} onChange={(value) => setValue("date", value)} /></FormField>
         <FormField label="مطلوب قبل أي جلسة؟"><input className="field" {...field("beforeSession")} /></FormField>
         <FormField label="حالة النتيجة"><select className="field" {...field("status")}><option value="pending">قيد الانتظار</option><option value="done">تم</option><option value="reviewed">راجعها الطبيب</option></select></FormField>
         <FormField label="إرفاق النتيجة" hint="يتم حفظ اسم الملف محليًا كعنصر توضيحي." className="sm:col-span-2"><input type="file" className="field" onChange={(e) => setForm((current) => ({ ...current, attachment: e.target.files?.[0]?.name || current.attachment }))} /></FormField>
@@ -1483,7 +1487,7 @@ function LabForm({ item, onSave }) {
 }
 
 function InstructionForm({ item, data, recording, onSave }) {
-  const [form, setForm, field] = useEntityForm(item, {
+  const [form, setForm, field, setValue] = useEntityForm(item, {
     id: "", title: "", category: "قبل جلسة العلاج", text: "", transcription: "", cycleId: "", medicationId: "", appointmentId: "", instructionDate: todayISO(), doctor: data.profile.doctor, priority: "عادي", caregiverNotes: "", attachment: "", updatedAt: todayISO(), pinned: false, confirmed: false,
   });
   return (
@@ -1499,7 +1503,7 @@ function InstructionForm({ item, data, recording, onSave }) {
         <FormField label="مرتبطة بأي دورة علاج؟"><select className="field" {...field("cycleId")}><option value="">غير مرتبطة</option>{data.cycles.map((value) => <option key={value.id} value={value.id}>{value.number}</option>)}</select></FormField>
         <FormField label="مرتبطة بأي دواء؟"><select className="field" {...field("medicationId")}><option value="">غير مرتبطة</option>{data.medications.map((value) => <option key={value.id} value={value.id}>{value.name}</option>)}</select></FormField>
         <FormField label="مرتبطة بأي موعد؟"><select className="field" {...field("appointmentId")}><option value="">غير مرتبطة</option>{data.appointments.map((value) => <option key={value.id} value={value.id}>{value.title}</option>)}</select></FormField>
-        <FormField label="تاريخ التعليمة"><input type="date" className="field" {...field("instructionDate")} /></FormField>
+        <FormField label="تاريخ التعليمة" hint="اليوم / الشهر / السنة"><DateInput value={form.instructionDate} onChange={(value) => setValue("instructionDate", value)} /></FormField>
         <FormField label="اسم الدكتور"><input className="field" {...field("doctor")} /></FormField>
         <FormField label="ملاحظات المرافق"><input className="field" {...field("caregiverNotes")} /></FormField>
         <FormField label={recording ? "إضافة تسجيل صوتي أو فيديو" : "إرفاق ملف صوت أو فيديو"} hint="يتم حفظ اسم الملف محليًا كعنصر توضيحي." className="sm:col-span-2">
