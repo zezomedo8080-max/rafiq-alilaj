@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   Activity,
   AlertCircle,
@@ -13,6 +13,9 @@ import {
   ChevronLeft,
   CircleDot,
   ClipboardCheck,
+  Cloud,
+  CloudOff,
+  Copy,
   Clock3,
   Download,
   Edit3,
@@ -37,10 +40,12 @@ import {
   Plus,
   Printer,
   Radio,
+  RefreshCw,
   Save,
   Search,
   Settings,
   ShieldAlert,
+  ShieldCheck,
   Sparkles,
   Stethoscope,
   Sun,
@@ -77,6 +82,14 @@ import {
   statusLabels,
   todayISO,
 } from "./data";
+import {
+  createCloudSpace,
+  deleteCloudSpace,
+  fetchCloudSpace,
+  generateSyncCode,
+  normalizeSyncCode,
+  saveCloudSpace,
+} from "./sync";
 
 const navItems = [
   { id: "dashboard", label: "الرئيسية", icon: LayoutDashboard },
@@ -141,10 +154,28 @@ function App() {
   const [mobileNav, setMobileNav] = useState(false);
   const [modal, setModal] = useState(null);
   const [toast, setToast] = useState("");
+  const [syncModal, setSyncModal] = useState(false);
+  const [syncConfig, setSyncConfig] = useState(() => {
+    try {
+      return JSON.parse(localStorage.getItem("rafiq-sync-config")) || { code: "" };
+    } catch {
+      return { code: "" };
+    }
+  });
+  const [syncStatus, setSyncStatus] = useState({ state: syncConfig.code ? "connecting" : "off", message: "" });
+  const syncVersionRef = useRef(null);
+  const lastSyncedRef = useRef("");
+  const syncReadyRef = useRef(false);
+  const dataRef = useRef(data);
 
   useEffect(() => {
     localStorage.setItem("rafiq-treatment-data", JSON.stringify(data));
+    dataRef.current = data;
   }, [data]);
+
+  useEffect(() => {
+    localStorage.setItem("rafiq-sync-config", JSON.stringify(syncConfig));
+  }, [syncConfig]);
 
   useEffect(() => {
     document.documentElement.classList.toggle("dark", data.settings.darkMode);
@@ -155,6 +186,119 @@ function App() {
     const timer = setTimeout(() => setToast(""), 2500);
     return () => clearTimeout(timer);
   }, [toast]);
+
+  const pullCloudData = async (showToast = false) => {
+    if (!syncConfig.code) return;
+    setSyncStatus({ state: "connecting", message: "جارٍ جلب أحدث البيانات..." });
+    try {
+      const cloud = await fetchCloudSpace(syncConfig.code);
+      syncVersionRef.current = cloud.version;
+      lastSyncedRef.current = JSON.stringify(cloud.data);
+      syncReadyRef.current = true;
+      setData({ ...defaultData, ...cloud.data });
+      setSyncStatus({ state: "synced", message: "تمت المزامنة" });
+      if (showToast) setToast("تم جلب أحدث البيانات من السحابة");
+    } catch (error) {
+      setSyncStatus({ state: "error", message: error.message });
+      if (showToast) setToast(error.message);
+    }
+  };
+
+  useEffect(() => {
+    if (!syncConfig.code) {
+      syncReadyRef.current = false;
+      syncVersionRef.current = null;
+      lastSyncedRef.current = "";
+      setSyncStatus({ state: "off", message: "" });
+      return undefined;
+    }
+    let cancelled = false;
+    const initialPull = async () => {
+      setSyncStatus({ state: "connecting", message: "جارٍ الاتصال..." });
+      try {
+        const cloud = await fetchCloudSpace(syncConfig.code);
+        if (cancelled) return;
+        syncVersionRef.current = cloud.version;
+        lastSyncedRef.current = JSON.stringify(cloud.data);
+        syncReadyRef.current = true;
+        setData({ ...defaultData, ...cloud.data });
+        setSyncStatus({ state: "synced", message: "تمت المزامنة" });
+      } catch (error) {
+        if (cancelled) return;
+        syncReadyRef.current = false;
+        setSyncStatus({ state: "error", message: error.message });
+      }
+    };
+    initialPull();
+    const interval = window.setInterval(() => {
+      if (syncReadyRef.current && JSON.stringify(dataRef.current) === lastSyncedRef.current) {
+        pullCloudData(false);
+      }
+    }, 20000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+    };
+  }, [syncConfig.code]);
+
+  useEffect(() => {
+    if (!syncConfig.code || !syncReadyRef.current) return undefined;
+    const serialized = JSON.stringify(data);
+    if (serialized === lastSyncedRef.current) return undefined;
+    setSyncStatus({ state: "saving", message: "جارٍ حفظ التعديلات..." });
+    const timer = window.setTimeout(async () => {
+      try {
+        const result = await saveCloudSpace(syncConfig.code, data, syncVersionRef.current);
+        syncVersionRef.current = result.version;
+        lastSyncedRef.current = serialized;
+        setSyncStatus({ state: "synced", message: "تمت المزامنة" });
+      } catch (error) {
+        setSyncStatus({
+          state: error.status === 409 ? "conflict" : "error",
+          message: error.status === 409 ? "يوجد تعديل أحدث من جهاز آخر. اضغط مزامنة الآن." : error.message,
+        });
+      }
+    }, 1200);
+    return () => window.clearTimeout(timer);
+  }, [data, syncConfig.code]);
+
+  const createSyncSpace = async () => {
+    const code = generateSyncCode();
+    setSyncStatus({ state: "saving", message: "جارٍ إنشاء مساحة المزامنة..." });
+    const result = await createCloudSpace(code, data);
+    syncVersionRef.current = result.version;
+    lastSyncedRef.current = JSON.stringify(data);
+    syncReadyRef.current = true;
+    setSyncConfig({ code });
+    setSyncStatus({ state: "synced", message: "تمت المزامنة" });
+    setToast("تم إنشاء مساحة المزامنة المشفرة");
+  };
+
+  const joinSyncSpace = async (code) => {
+    const normalized = normalizeSyncCode(code);
+    setSyncStatus({ state: "connecting", message: "جارٍ ربط الجهاز..." });
+    const cloud = await fetchCloudSpace(normalized);
+    syncVersionRef.current = cloud.version;
+    lastSyncedRef.current = JSON.stringify(cloud.data);
+    syncReadyRef.current = true;
+    setData({ ...defaultData, ...cloud.data });
+    setSyncConfig({ code: normalized });
+    setSyncStatus({ state: "synced", message: "تمت المزامنة" });
+    setToast("تم ربط الجهاز بالبيانات السحابية");
+  };
+
+  const disconnectSync = () => {
+    setSyncConfig({ code: "" });
+    setSyncStatus({ state: "off", message: "" });
+    setToast("تم فصل هذا الجهاز. البيانات المحلية ما زالت محفوظة.");
+  };
+
+  const removeSyncSpace = async () => {
+    if (!syncConfig.code) return;
+    await deleteCloudSpace(syncConfig.code);
+    disconnectSync();
+    setToast("تم حذف مساحة المزامنة السحابية");
+  };
 
   const activeNav = navItems.find((item) => item.id === page);
 
@@ -209,6 +353,9 @@ function App() {
       deleteEntity,
       saveEntity,
       setToast,
+      openSync: () => setSyncModal(true),
+      syncStatus,
+      syncConfig,
     };
     switch (page) {
       case "profile":
@@ -274,6 +421,19 @@ function App() {
             </div>
           </div>
           <div className="flex items-center gap-2">
+            <button
+              onClick={() => setSyncModal(true)}
+              className={`relative rounded-2xl border p-3 shadow-sm ${
+                syncConfig.code
+                  ? "border-emerald-200 bg-emerald-50 text-emerald-600 dark:border-emerald-900 dark:bg-emerald-950"
+                  : "border-slate-200 bg-white text-slate-500 dark:border-slate-700 dark:bg-slate-800"
+              }`}
+              aria-label="المزامنة بين الأجهزة"
+              title={syncStatus.message || "المزامنة بين الأجهزة"}
+            >
+              {syncConfig.code ? <Cloud size={19} /> : <CloudOff size={19} />}
+              {["connecting", "saving"].includes(syncStatus.state) && <span className="absolute left-1 top-1 h-2 w-2 animate-pulse rounded-full bg-orange-400" />}
+            </button>
             <button
               className="relative rounded-2xl border border-slate-200 bg-white p-3 text-slate-500 shadow-sm dark:border-slate-700 dark:bg-slate-800"
               aria-label="التنبيهات"
@@ -357,6 +517,18 @@ function App() {
       )}
 
       <EntityModal modal={modal} onClose={() => setModal(null)} onSave={saveEntity} data={data} setData={setData} />
+      <SyncModal
+        open={syncModal}
+        onClose={() => setSyncModal(false)}
+        config={syncConfig}
+        status={syncStatus}
+        onCreate={createSyncSpace}
+        onJoin={joinSyncSpace}
+        onPull={() => pullCloudData(true)}
+        onDisconnect={disconnectSync}
+        onDelete={removeSyncSpace}
+        setToast={setToast}
+      />
 
       {toast && (
         <div className="fixed bottom-24 left-1/2 z-[80] -translate-x-1/2 rounded-2xl bg-slate-900 px-5 py-3 text-sm font-bold text-white shadow-2xl dark:bg-teal-600 xl:bottom-7">
@@ -1233,7 +1405,7 @@ function ReportLine({ title, detail, badge }) {
   );
 }
 
-function SettingsPage({ data, setData, setToast }) {
+function SettingsPage({ data, setData, setToast, openSync, syncStatus, syncConfig }) {
   const updateSetting = (key, value) => setData((current) => ({ ...current, settings: { ...current.settings, [key]: value } }));
   const exportData = () => {
     const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
@@ -1246,7 +1418,7 @@ function SettingsPage({ data, setData, setToast }) {
   };
   return (
     <>
-      <PageHeader eyebrow="التفضيلات والنسخ الاحتياطي" title="الإعدادات" subtitle="خصّص تجربة الاستخدام واحتفظ بنسخة من بياناتك المحلية." />
+      <PageHeader eyebrow="التفضيلات والنسخ الاحتياطي" title="الإعدادات" subtitle="خصّص تجربة الاستخدام واحتفظ بنسخة محلية أو مشفرة سحابيًا من بياناتك." />
       <div className="grid gap-6 lg:grid-cols-[1fr_.8fr]">
         <section className="surface">
           <SectionHeader title="تفضيلات التطبيق" subtitle="يمكن تغيير هذه الخيارات في أي وقت." />
@@ -1258,7 +1430,20 @@ function SettingsPage({ data, setData, setToast }) {
         </section>
         <div className="space-y-6">
           <section className="surface">
-            <SectionHeader title="النسخ والبيانات" subtitle="البيانات محفوظة على هذا الجهاز في المتصفح." />
+            <SectionHeader title="المزامنة بين الأجهزة" subtitle="استخدم نفس رمز المزامنة السري على الهاتف والكمبيوتر للوصول إلى نفس البيانات." />
+            <div className={`rounded-2xl p-4 ${syncConfig.code ? "bg-emerald-50 dark:bg-emerald-950/30" : "bg-slate-50 dark:bg-slate-800/60"}`}>
+              <div className="flex items-center gap-3">
+                <IconBox icon={syncConfig.code ? Cloud : CloudOff} tone={syncConfig.code ? "green" : "blue"} />
+                <div className="min-w-0 flex-1">
+                  <p className="font-black text-ink dark:text-white">{syncConfig.code ? "المزامنة مفعلة" : "المزامنة غير مفعلة"}</p>
+                  <p className="mt-1 text-xs leading-5 text-slate-500">{syncStatus.message || "البيانات محفوظة على هذا الجهاز فقط."}</p>
+                </div>
+              </div>
+            </div>
+            <button className="btn-primary mt-4 w-full" onClick={openSync}><Cloud size={17} /> إدارة المزامنة</button>
+          </section>
+          <section className="surface">
+            <SectionHeader title="النسخ والبيانات" subtitle="توجد نسخة محلية في المتصفح، ويمكنك تصديرها كملف احتياطي." />
             <button className="btn-primary w-full" onClick={exportData}><Download size={17} /> تصدير نسخة من البيانات</button>
             <button
               className="btn-secondary mt-3 w-full"
@@ -1276,6 +1461,125 @@ function SettingsPage({ data, setData, setToast }) {
         </div>
       </div>
     </>
+  );
+}
+
+function SyncModal({ open, onClose, config, status, onCreate, onJoin, onPull, onDisconnect, onDelete, setToast }) {
+  const [joinCode, setJoinCode] = useState("");
+  const [busy, setBusy] = useState(false);
+  const connected = Boolean(config.code);
+  const statusToneClass = {
+    synced: "bg-emerald-50 text-emerald-800 dark:bg-emerald-950/30 dark:text-emerald-200",
+    saving: "bg-sky-50 text-sky-800 dark:bg-sky-950/30 dark:text-sky-200",
+    connecting: "bg-sky-50 text-sky-800 dark:bg-sky-950/30 dark:text-sky-200",
+    conflict: "bg-orange-50 text-orange-800 dark:bg-orange-950/30 dark:text-orange-200",
+    error: "bg-rose-50 text-rose-800 dark:bg-rose-950/30 dark:text-rose-200",
+  };
+
+  const run = async (action) => {
+    setBusy(true);
+    try {
+      await action();
+    } catch (error) {
+      setToast(error.message || "تعذر إتمام المزامنة");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const copyCode = async () => {
+    await navigator.clipboard.writeText(config.code);
+    setToast("تم نسخ رمز المزامنة السري");
+  };
+
+  return (
+    <Modal
+      open={open}
+      onClose={onClose}
+      title="المزامنة بين الأجهزة"
+      subtitle="نفس رمز المزامنة السري يفتح نفس البيانات على أي جهاز."
+      size="lg"
+    >
+      <AlertBox title="تشفير وخصوصية" tone="success">
+        يتم تشفير بيانات العلاج داخل جهازك قبل رفعها. لا تشارك رمز المزامنة إلا مع الشخص المصرح له، لأنه مفتاح الوصول إلى البيانات.
+      </AlertBox>
+      <p className="mt-3 rounded-2xl bg-slate-50 p-3 text-xs leading-6 text-slate-500 dark:bg-slate-800/60">
+        المزامنة مناسبة للاستخدام الشخصي والأسري. المؤسسات الطبية التي تخضع لمتطلبات تنظيمية تحتاج استضافة واتفاقيات امتثال مخصصة.
+      </p>
+
+      {connected ? (
+        <div className="mt-5 space-y-4">
+          <div className={`rounded-2xl p-4 ${statusToneClass[status.state] || "bg-slate-50 text-slate-700 dark:bg-slate-800 dark:text-slate-200"}`}>
+            <div className="flex items-center gap-3">
+              {["saving", "connecting"].includes(status.state) ? <RefreshCw className="animate-spin" size={20} /> : status.state === "synced" ? <Cloud size={20} /> : <AlertCircle size={20} />}
+              <div>
+                <p className="font-black">{status.state === "synced" ? "المزامنة تعمل" : "حالة المزامنة"}</p>
+                <p className="mt-1 text-xs">{status.message || "جاهزة"}</p>
+              </div>
+            </div>
+          </div>
+
+          <div className="rounded-2xl border border-dashed border-teal-200 bg-teal-50/50 p-4 dark:border-teal-900 dark:bg-teal-950/20">
+            <p className="text-xs font-black text-teal-700 dark:text-teal-300">رمز المزامنة السري</p>
+            <p className="mt-3 break-all rounded-xl bg-white p-3 text-left font-mono text-sm font-bold text-slate-700 dark:bg-slate-900 dark:text-slate-200" dir="ltr">{config.code}</p>
+            <button className="btn-secondary mt-3 w-full" onClick={copyCode}><Copy size={17} /> نسخ الرمز للجهاز الآخر</button>
+          </div>
+
+          <ol className="space-y-2 rounded-2xl bg-slate-50 p-4 text-sm leading-7 text-slate-600 dark:bg-slate-800/60 dark:text-slate-300">
+            <li><strong>1.</strong> افتح الموقع على الجهاز الآخر.</li>
+            <li><strong>2.</strong> اضغط أيقونة السحابة ثم “ربط جهاز موجود”.</li>
+            <li><strong>3.</strong> الصق رمز المزامنة السري نفسه.</li>
+          </ol>
+
+          <div className="flex flex-wrap gap-2">
+            <button className="btn-primary flex-1" disabled={busy} onClick={() => run(onPull)}><RefreshCw size={17} /> مزامنة الآن</button>
+            <button className="btn-secondary flex-1" disabled={busy} onClick={onDisconnect}><CloudOff size={17} /> فصل هذا الجهاز</button>
+          </div>
+          <button
+            className="btn-danger w-full"
+            disabled={busy}
+            onClick={() => {
+              if (window.confirm("سيتم حذف النسخة السحابية نهائيًا من جميع الأجهزة. هل تريد المتابعة؟")) run(onDelete);
+            }}
+          >
+            حذف مساحة المزامنة السحابية
+          </button>
+        </div>
+      ) : (
+        <div className="mt-5 space-y-5">
+          <section className="rounded-2xl border border-teal-100 p-4 dark:border-teal-900">
+            <div className="flex items-start gap-3">
+              <IconBox icon={ShieldCheck} tone="green" />
+              <div className="flex-1">
+                <h3 className="font-black text-ink dark:text-white">إنشاء مساحة مزامنة جديدة</h3>
+                <p className="mt-2 text-sm leading-7 text-slate-500">سيتم رفع بيانات هذا الجهاز بعد تشفيرها، وإنشاء رمز سري تستخدمه على الأجهزة الأخرى.</p>
+                <button className="btn-primary mt-4 w-full" disabled={busy} onClick={() => run(onCreate)}>
+                  {busy ? <RefreshCw className="animate-spin" size={17} /> : <Cloud size={17} />}
+                  إنشاء وتفعيل المزامنة
+                </button>
+              </div>
+            </div>
+          </section>
+
+          <section className="rounded-2xl border border-slate-200 p-4 dark:border-slate-700">
+            <h3 className="font-black text-ink dark:text-white">ربط جهاز موجود</h3>
+            <p className="mt-2 text-sm leading-7 text-slate-500">الصق رمز المزامنة السري من الجهاز الأول. ستُستبدل بيانات هذا الجهاز بالنسخة السحابية.</p>
+            <textarea
+              className="field mt-3 text-left font-mono"
+              dir="ltr"
+              rows="3"
+              value={joinCode}
+              onChange={(event) => setJoinCode(event.target.value)}
+              placeholder="RAFIQ-..."
+            />
+            <button className="btn-secondary mt-3 w-full" disabled={busy || joinCode.trim().length < 24} onClick={() => run(() => onJoin(joinCode))}>
+              {busy ? <RefreshCw className="animate-spin" size={17} /> : <Cloud size={17} />}
+              ربط الجهاز وجلب البيانات
+            </button>
+          </section>
+        </div>
+      )}
+    </Modal>
   );
 }
 
