@@ -146,6 +146,87 @@ function priorityTone(priority) {
   return "teal";
 }
 
+function parseStoredDate(value) {
+  const text = String(value || "").trim();
+  let match = text.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (match) {
+    return { year: Number(match[1]), month: Number(match[2]), day: Number(match[3]) };
+  }
+  match = text.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{4})$/);
+  if (match) {
+    return { year: Number(match[3]), month: Number(match[2]), day: Number(match[1]) };
+  }
+  return null;
+}
+
+function toMonthKey(parts) {
+  if (!parts) return "";
+  return `${parts.year}-${String(parts.month).padStart(2, "0")}`;
+}
+
+function toDateKey(parts) {
+  if (!parts) return "";
+  return `${toMonthKey(parts)}-${String(parts.day).padStart(2, "0")}`;
+}
+
+function addMonths(monthKey, amount) {
+  const [year, month] = monthKey.split("-").map(Number);
+  const date = new Date(year, month - 1 + amount, 1, 12);
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
+}
+
+function formatMonthLabel(monthKey) {
+  const [year, month] = monthKey.split("-").map(Number);
+  return new Intl.DateTimeFormat("ar-EG", { month: "long", year: "numeric" }).format(new Date(year, month - 1, 1, 12));
+}
+
+function appointmentTone(type) {
+  if (type === "تحليل") return "orange";
+  if (type === "كشف دكتور") return "lavender";
+  return "teal";
+}
+
+function attachmentName(attachment) {
+  if (!attachment) return "";
+  if (typeof attachment === "string") return attachment;
+  return attachment.name || "";
+}
+
+function attachmentType(attachment) {
+  if (!attachment || typeof attachment === "string") return "";
+  return attachment.type || "";
+}
+
+function attachmentDataUrl(attachment) {
+  if (!attachment || typeof attachment === "string") return "";
+  return attachment.dataUrl || "";
+}
+
+function formatBytes(bytes) {
+  if (!bytes) return "";
+  if (bytes < 1024 * 1024) return `${Math.max(1, Math.round(bytes / 1024))} ك.ب`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} م.ب`;
+}
+
+function readFileAsDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = () => reject(new Error("تعذر قراءة الملف."));
+    reader.readAsDataURL(file);
+  });
+}
+
+function isAllowedInstructionAttachment(file) {
+  return (
+    file.type.startsWith("audio/") ||
+    file.type.startsWith("video/") ||
+    /\.(aac|m4a|mp3|mp4|mov|ogg|wav|webm)$/i.test(file.name)
+  );
+}
+
+const maxInstructionAttachmentBytes = 3 * 1024 * 1024;
+
 function App() {
   const [data, setData] = useState(loadData);
   const [page, setPage] = useState("dashboard");
@@ -168,7 +249,11 @@ function App() {
   const dataRef = useRef(data);
 
   useEffect(() => {
-    localStorage.setItem("rafiq-treatment-data", JSON.stringify(data));
+    try {
+      localStorage.setItem("rafiq-treatment-data", JSON.stringify(data));
+    } catch {
+      setToast("حجم البيانات كبير جدًا. احذف أو قلل حجم المرفق الصوتي/الفيديو ثم حاول مرة أخرى.");
+    }
     dataRef.current = data;
   }, [data]);
 
@@ -896,6 +981,26 @@ function AppointmentsPage({ data, openModal, deleteEntity }) {
   const [view, setView] = useState("month");
   const views = { month: "الشهر", week: "القائمة", today: "اليوم" };
   const displayAppointments = view === "today" ? data.appointments.filter((item) => item.date === todayISO()) : data.appointments;
+  const initialCalendarMonth = useMemo(() => {
+    const todayMonth = todayISO().slice(0, 7);
+    const appointmentsWithDates = data.appointments
+      .map((appointment) => ({ appointment, parts: parseStoredDate(appointment.date) }))
+      .filter((item) => item.parts)
+      .sort((a, b) => toDateKey(a.parts).localeCompare(toDateKey(b.parts)));
+    const upcoming = appointmentsWithDates.find((item) => toDateKey(item.parts) >= todayISO());
+    return upcoming ? toMonthKey(upcoming.parts) : appointmentsWithDates[0] ? toMonthKey(appointmentsWithDates[0].parts) : todayMonth;
+  }, [data.appointments]);
+  const [calendarMonth, setCalendarMonth] = useState(initialCalendarMonth);
+  useEffect(() => {
+    setCalendarMonth((current) => current || initialCalendarMonth);
+  }, [initialCalendarMonth]);
+  const monthAppointments = useMemo(
+    () =>
+      data.appointments
+        .filter((appointment) => toMonthKey(parseStoredDate(appointment.date)) === calendarMonth)
+        .sort((a, b) => toDateKey(parseStoredDate(a.date)).localeCompare(toDateKey(parseStoredDate(b.date)))),
+    [data.appointments, calendarMonth],
+  );
   return (
     <>
       <PageHeader
@@ -916,7 +1021,13 @@ function AppointmentsPage({ data, openModal, deleteEntity }) {
           <span className="flex items-center gap-2"><i className="h-2.5 w-2.5 rounded-full bg-orange-400" /> تحليل</span>
         </div>
       </div>
-      {view === "month" && <CalendarMock appointments={data.appointments} />}
+      {view === "month" && (
+        <CalendarMonth
+          appointments={data.appointments}
+          monthKey={calendarMonth}
+          onMonthChange={setCalendarMonth}
+        />
+      )}
       {view !== "month" && (
         <div className="grid gap-4 lg:grid-cols-2">
           {displayAppointments.length ? displayAppointments.map((appointment) => (
@@ -925,34 +1036,76 @@ function AppointmentsPage({ data, openModal, deleteEntity }) {
         </div>
       )}
       {view === "month" && (
-        <div className="mt-6 grid gap-4 lg:grid-cols-2 xl:grid-cols-3">
-          {data.appointments.map((appointment) => <AppointmentCard key={appointment.id} appointment={appointment} onEdit={() => openModal({ type: "appointment", item: appointment })} onDelete={() => deleteEntity("appointment", appointment.id)} />)}
-        </div>
+        <section className="mt-6">
+          <SectionHeader title={`مواعيد ${formatMonthLabel(calendarMonth)}`} subtitle="هذه القائمة تخص الشهر المعروض في التقويم فقط." />
+          <div className="grid gap-4 lg:grid-cols-2 xl:grid-cols-3">
+            {monthAppointments.length ? monthAppointments.map((appointment) => (
+              <AppointmentCard key={appointment.id} appointment={appointment} onEdit={() => openModal({ type: "appointment", item: appointment })} onDelete={() => deleteEntity("appointment", appointment.id)} />
+            )) : <div className="lg:col-span-2 xl:col-span-3"><EmptyState title="لا توجد مواعيد في هذا الشهر" text="استخدم أزرار الشهر السابق/التالي أو أضف موعدًا جديدًا." /></div>}
+          </div>
+        </section>
       )}
     </>
   );
 }
 
-function CalendarMock({ appointments }) {
-  const days = Array.from({ length: 30 }, (_, i) => i + 1);
-  const byDay = Object.fromEntries(appointments.map((item) => [Number(item.date.slice(-2)), item]));
+function CalendarMonth({ appointments, monthKey, onMonthChange }) {
+  const [year, month] = monthKey.split("-").map(Number);
+  const daysInMonth = new Date(year, month, 0).getDate();
+  const firstDay = new Date(year, month - 1, 1, 12).getDay();
+  const leadingBlanks = (firstDay + 1) % 7;
+  const byDate = appointments.reduce((map, appointment) => {
+    const parts = parseStoredDate(appointment.date);
+    if (!parts || toMonthKey(parts) !== monthKey) return map;
+    const key = toDateKey(parts);
+    if (!map.has(key)) map.set(key, []);
+    map.get(key).push(appointment);
+    return map;
+  }, new Map());
+  const cells = [
+    ...Array.from({ length: leadingBlanks }, (_, index) => ({ type: "blank", key: `blank-${index}` })),
+    ...Array.from({ length: daysInMonth }, (_, index) => ({ type: "day", day: index + 1 })),
+  ];
+  const dotClasses = {
+    teal: "bg-teal-500",
+    lavender: "bg-violet-400",
+    orange: "bg-orange-400",
+  };
   return (
     <section className="surface">
-      <div className="mb-5 flex items-center justify-between">
+      <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <p className="text-xs font-bold text-slate-400">عرض شهري مبسط</p>
-          <h2 className="mt-1 text-lg font-black text-ink dark:text-white">يونيو ٢٠٢٦</h2>
+          <p className="text-xs font-bold text-slate-400">عرض شهري حقيقي</p>
+          <h2 className="mt-1 text-lg font-black text-ink dark:text-white">{formatMonthLabel(monthKey)}</h2>
         </div>
-        <IconBox icon={Calendar} tone="blue" />
+        <div className="no-print flex items-center gap-2">
+          <button className="btn-secondary py-2" onClick={() => onMonthChange(addMonths(monthKey, -1))}>الشهر السابق</button>
+          <IconBox icon={Calendar} tone="blue" />
+          <button className="btn-secondary py-2" onClick={() => onMonthChange(addMonths(monthKey, 1))}>الشهر التالي</button>
+        </div>
       </div>
       <div className="grid grid-cols-7 gap-1 text-center text-[11px] font-bold text-slate-400 sm:gap-2 sm:text-xs">
         {["السبت", "الأحد", "الاثنين", "الثلاثاء", "الأربعاء", "الخميس", "الجمعة"].map((day) => <span key={day} className="py-2">{day}</span>)}
-        {days.map((day) => {
-          const appointment = byDay[day];
+        {cells.map((cell) => {
+          if (cell.type === "blank") return <div key={cell.key} className="min-h-16 rounded-xl bg-transparent sm:min-h-20" />;
+          const dateKey = `${monthKey}-${String(cell.day).padStart(2, "0")}`;
+          const dayAppointments = byDate.get(dateKey) || [];
+          const hasAppointments = dayAppointments.length > 0;
           return (
-            <div key={day} className={`min-h-16 rounded-xl p-2 text-right sm:min-h-20 ${appointment ? "bg-teal-50 ring-1 ring-teal-200 dark:bg-teal-950/30 dark:ring-teal-800" : "bg-slate-50 dark:bg-slate-800/50"}`}>
-              <span className={`inline-flex h-6 w-6 items-center justify-center rounded-lg ${appointment ? "bg-teal-600 text-white" : "text-slate-500"}`}>{day}</span>
-              {appointment && <p className="mt-2 line-clamp-2 text-[9px] font-bold leading-4 text-teal-700 dark:text-teal-300 sm:text-[10px]">{appointment.title}</p>}
+            <div key={dateKey} className={`min-h-20 rounded-xl p-2 text-right sm:min-h-24 ${hasAppointments ? "bg-teal-50 ring-1 ring-teal-200 dark:bg-teal-950/30 dark:ring-teal-800" : "bg-slate-50 dark:bg-slate-800/50"}`}>
+              <span className={`inline-flex h-6 w-6 items-center justify-center rounded-lg ${hasAppointments ? "bg-teal-600 text-white" : "text-slate-500"}`}>{cell.day}</span>
+              <div className="mt-2 space-y-1">
+                {dayAppointments.slice(0, 2).map((appointment) => {
+                  const tone = appointmentTone(appointment.type);
+                  return (
+                    <p key={appointment.id} className="flex items-start gap-1 text-[9px] font-bold leading-4 text-slate-700 dark:text-slate-200 sm:text-[10px]">
+                      <i className={`mt-1 h-1.5 w-1.5 shrink-0 rounded-full ${dotClasses[tone]}`} />
+                      <span className="line-clamp-2">{appointment.title}</span>
+                    </p>
+                  );
+                })}
+                {dayAppointments.length > 2 && <p className="text-[9px] font-black text-teal-700 dark:text-teal-300">+{dayAppointments.length - 2} مواعيد</p>}
+              </div>
             </div>
           );
         })}
@@ -962,7 +1115,7 @@ function CalendarMock({ appointments }) {
 }
 
 function AppointmentCard({ appointment, onEdit, onDelete }) {
-  const tone = appointment.type === "تحليل" ? "orange" : appointment.type === "كشف دكتور" ? "lavender" : "teal";
+  const tone = appointmentTone(appointment.type);
   return (
     <article className="surface">
       <div className="flex items-start gap-3">
@@ -1290,11 +1443,15 @@ function InstructionCard({ instruction, data, onPin, onEdit, onDelete, compact =
   const cycle = data.cycles.find((item) => item.id === instruction.cycleId);
   const medication = data.medications.find((item) => item.id === instruction.medicationId);
   const appointment = data.appointments.find((item) => item.id === instruction.appointmentId);
+  const attachedName = attachmentName(instruction.attachment);
+  const attachedDataUrl = attachmentDataUrl(instruction.attachment);
+  const attachedType = attachmentType(instruction.attachment);
+  const isVideoAttachment = attachedType.startsWith("video/") || attachedDataUrl.startsWith("data:video/");
   return (
     <article className={`surface relative overflow-hidden ${instruction.priority === "عاجل" ? "!border-rose-200 dark:!border-rose-900" : ""}`}>
       <span className={`absolute right-0 top-0 h-full w-1.5 ${instruction.priority === "عاجل" ? "bg-rose-500" : instruction.priority === "مهم" ? "bg-orange-400" : "bg-teal-500"}`} />
       <div className="flex items-start gap-3">
-        <IconBox icon={instruction.attachment ? FileAudio : Stethoscope} tone={instruction.priority === "عاجل" ? "rose" : instruction.priority === "مهم" ? "orange" : "teal"} />
+        <IconBox icon={attachedName ? FileAudio : Stethoscope} tone={instruction.priority === "عاجل" ? "rose" : instruction.priority === "مهم" ? "orange" : "teal"} />
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
             <Badge tone={priorityTone(instruction.priority)}>{instruction.priority}</Badge>
@@ -1312,11 +1469,38 @@ function InstructionCard({ instruction, data, onPin, onEdit, onDelete, compact =
           <p className="mt-2 text-sm leading-7 text-slate-600 dark:text-slate-300">{instruction.transcription}</p>
         </div>
       )}
+      {!compact && attachedName && (
+        <div className="mt-4 rounded-2xl border border-violet-200 bg-violet-50/60 p-4 dark:border-violet-900 dark:bg-violet-950/20">
+          <p className="flex items-center gap-2 text-xs font-black text-violet-700 dark:text-violet-300">
+            {isVideoAttachment ? <Video size={15} /> : <FileAudio size={15} />}
+            مرفق التسجيل
+          </p>
+          <p className="mt-2 break-all text-xs font-bold text-slate-500">
+            {attachedName}
+            {instruction.attachment?.size ? ` • ${formatBytes(instruction.attachment.size)}` : ""}
+          </p>
+          {attachedDataUrl ? (
+            isVideoAttachment ? (
+              <video className="mt-3 max-h-80 w-full rounded-2xl bg-black" controls src={attachedDataUrl}>
+                لا يدعم المتصفح تشغيل هذا الفيديو.
+              </video>
+            ) : (
+              <audio className="mt-3 w-full" controls src={attachedDataUrl}>
+                لا يدعم المتصفح تشغيل هذا التسجيل الصوتي.
+              </audio>
+            )
+          ) : (
+            <p className="mt-3 rounded-xl bg-white p-3 text-xs leading-6 text-amber-700 dark:bg-slate-900 dark:text-amber-300">
+              هذا المرفق محفوظ كاسم فقط من نسخة قديمة. افتح التعليمة واضغط تعديل ثم أعد رفع الملف مرة واحدة ليعمل التشغيل من داخل الموقع.
+            </p>
+          )}
+        </div>
+      )}
       <div className="mt-4 flex flex-wrap gap-2">
         {cycle && <Badge tone="blue"><Syringe size={11} className="ml-1" /> {cycle.number}</Badge>}
         {medication && <Badge tone="teal"><Pill size={11} className="ml-1" /> {medication.name}</Badge>}
         {appointment && <Badge tone="orange"><Calendar size={11} className="ml-1" /> {appointment.title}</Badge>}
-        {instruction.attachment && <Badge tone="violet"><FileAudio size={11} className="ml-1" /> {instruction.attachment}</Badge>}
+        {attachedName && <Badge tone="violet"><FileAudio size={11} className="ml-1" /> {attachedName}</Badge>}
       </div>
       <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-slate-100 pt-4 text-xs text-slate-400 dark:border-slate-800">
         <span>{instruction.doctor} • {formatDate(instruction.instructionDate)}</span>
@@ -1832,6 +2016,38 @@ function InstructionForm({ item, data, recording, onSave }) {
   const [form, setForm, field, setValue] = useEntityForm(item, {
     id: "", title: "", category: "قبل جلسة العلاج", text: "", transcription: "", cycleId: "", medicationId: "", appointmentId: "", instructionDate: todayISO(), doctor: data.profile.doctor, priority: "عادي", caregiverNotes: "", attachment: "", updatedAt: todayISO(), pinned: false, confirmed: false,
   });
+  const [attachmentError, setAttachmentError] = useState("");
+  const currentAttachmentName = attachmentName(form.attachment);
+  const handleAttachmentChange = async (event) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    if (!isAllowedInstructionAttachment(file)) {
+      setAttachmentError("اختر ملف صوت أو فيديو فقط.");
+      event.target.value = "";
+      return;
+    }
+    if (file.size > maxInstructionAttachmentBytes) {
+      setAttachmentError(`حجم الملف كبير. الحد الأقصى ${formatBytes(maxInstructionAttachmentBytes)} للتسجيل الواحد.`);
+      event.target.value = "";
+      return;
+    }
+    try {
+      const dataUrl = await readFileAsDataUrl(file);
+      setForm((current) => ({
+        ...current,
+        attachment: {
+          name: file.name,
+          type: file.type || "application/octet-stream",
+          size: file.size,
+          dataUrl,
+          savedAt: new Date().toISOString(),
+        },
+      }));
+      setAttachmentError("");
+    } catch (error) {
+      setAttachmentError(error.message || "تعذر قراءة الملف.");
+    }
+  };
   return (
     <form onSubmit={(e) => { e.preventDefault(); onSave(form); }}>
       <AlertBox title="انقل التعليمات بدقة" tone="warning">
@@ -1848,9 +2064,22 @@ function InstructionForm({ item, data, recording, onSave }) {
         <FormField label="تاريخ التعليمة" hint="اليوم / الشهر / السنة"><DateInput value={form.instructionDate} onChange={(value) => setValue("instructionDate", value)} /></FormField>
         <FormField label="اسم الدكتور"><input className="field" {...field("doctor")} /></FormField>
         <FormField label="ملاحظات المرافق"><input className="field" {...field("caregiverNotes")} /></FormField>
-        <FormField label={recording ? "إضافة تسجيل صوتي أو فيديو" : "إرفاق ملف صوت أو فيديو"} hint="يتم حفظ اسم الملف محليًا كعنصر توضيحي." className="sm:col-span-2">
-          <input type="file" accept="audio/*,video/*" className="field" onChange={(e) => setForm((current) => ({ ...current, attachment: e.target.files?.[0]?.name || current.attachment }))} />
-          {form.attachment && <p className="mt-2 text-xs font-bold text-violet-600">الملف الحالي: {form.attachment}</p>}
+        <FormField label={recording ? "إضافة تسجيل صوتي أو فيديو" : "إرفاق ملف صوت أو فيديو"} hint="يتم حفظ الملف نفسه داخل بيانات التعليمة المشفرة حتى يمكن تشغيله من أي جهاز بعد المزامنة." className="sm:col-span-2">
+          <input type="file" accept="audio/*,video/*,.m4a,.mp3,.mp4,.wav,.webm,.ogg,.mov,.aac" className="field" onChange={handleAttachmentChange} />
+          {currentAttachmentName && (
+            <div className="mt-2 rounded-2xl bg-violet-50 p-3 text-xs leading-6 text-violet-700 dark:bg-violet-950/30 dark:text-violet-200">
+              <p className="font-black">الملف الحالي: {currentAttachmentName}</p>
+              {attachmentDataUrl(form.attachment) ? (
+                <p>سيظهر مشغل الصوت/الفيديو داخل كارت التعليمة بعد الحفظ.</p>
+              ) : (
+                <p>هذا ملف قديم محفوظ كاسم فقط. أعد رفع الملف هنا ليعمل التشغيل.</p>
+              )}
+              <button type="button" className="btn-secondary mt-2 py-2" onClick={() => setForm((current) => ({ ...current, attachment: "" }))}>
+                حذف المرفق
+              </button>
+            </div>
+          )}
+          {attachmentError && <p className="mt-2 text-xs font-bold text-rose-600">{attachmentError}</p>}
         </FormField>
         <FormField label="تفريغ كلام الدكتور" hint="اكتب الكلام المسموع يدويًا، ثم راجعه جيدًا." className="sm:col-span-2"><textarea rows="4" className="field" {...field("transcription")} /></FormField>
         <label className="flex items-center gap-3 rounded-2xl bg-teal-50 p-4 text-sm font-bold text-teal-800 dark:bg-teal-950/30 dark:text-teal-200">

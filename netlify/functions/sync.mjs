@@ -41,7 +41,7 @@ function validEncrypted(value) {
     value.iv.length < 128 &&
     typeof value.ciphertext === "string" &&
     value.ciphertext.length > 10 &&
-    value.ciphertext.length < 2_000_000
+    value.ciphertext.length < 7_000_000
   );
 }
 
